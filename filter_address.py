@@ -96,4 +96,39 @@ class TradeAnalyzer:
     
     def calculate_winrate(self, address: str) -> dict:
         """計算指定地址的勝率"""
-        trades = self.get
+        trades = self.get_trades_by_address(address)
+        if not trades:
+            return {"overall_win_rate": 0.0, "total_trades": 0, "winning_trades": 0, "losing_trades": 0, "win_rates_by_coin": {}}
+
+        pnl_by_coin = self.calculate_pnl_by_coin(trades)
+
+        total_winning_trades = 0
+        total_losing_trades = 0
+        total_trades = 0
+        win_rates_by_coin = {}
+
+        for coin, stats in pnl_by_coin.items():
+            winning = stats['winning_trades']
+            losing = stats['losing_trades']
+            coin_total_trades = winning + losing
+            
+            total_winning_trades += winning
+            total_losing_trades += losing
+            total_trades += coin_total_trades
+
+            if coin_total_trades > 0:
+                win_rates_by_coin[coin] = (winning / coin_total_trades) * 100
+            else:
+                win_rates_by_coin[coin] = 0.0
+        
+        overall_win_rate = 0.0
+        if total_trades > 0:
+            overall_win_rate = (total_winning_trades / total_trades) * 100
+
+        return {
+            "overall_win_rate": overall_win_rate,
+            "total_trades": total_trades,
+            "winning_trades": total_winning_trades,
+            "losing_trades": total_losing_trades,
+            "win_rates_by_coin": win_rates_by_coin
+        }
