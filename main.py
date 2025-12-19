@@ -1,3 +1,4 @@
+import uvicorn
 import asyncio
 import sqlite3
 import aiohttp
