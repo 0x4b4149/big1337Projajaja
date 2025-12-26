@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 # --- 設定與常數 ---
@@ -182,16 +182,26 @@ async def tracker_loop():
             await asyncio.sleep(POLL_INTERVAL)
 
 # --- Telegram Bot ---
+def format_timestamp(ts_ms):
+    return datetime.fromtimestamp(ts_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+
 async def bot_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("歡迎使用巨鯨分析 Bot！🐳\n\n使用 /analysis 指令來獲取最新的市場巨鯨活動分析報告。" )
+    welcome_message = """歡迎使用巨鯨分析 Bot！🐳
+
+**可用指令：**
+/analysis - 獲取最新的市場巨鯨活動分析報告。
+/track <地址> - 新增或追蹤一個錢包地址。
+/trades <地址> - 查詢特定地址的最近 5 筆交易。
+/history <地址> - 查詢特定地址的歷史總覽 (最近 3 筆資金轉移與交易)。
+"""
+    await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
 async def bot_analysis_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("正在獲取最新的巨鯨活動分析，請稍候...")
     try:
-        data = analyze_whale_activity() # 直接呼叫分析函式
+        data = analyze_whale_activity()
         whales_list_str = "\n".join(f"- `{addr}`" for addr in data.get('identified_whales', [])) or "無"
-        message = f"""
-📈 **巨鯨活動分析報告** 📈
+        message = f"""📈 **巨鯨活動分析報告** 📈
 
 **分析建議：{data.get('suggestion', 'N/A')}**
 **主要原因**：{data.get('reasoning', 'N/A')}
@@ -210,11 +220,85 @@ async def bot_analysis_command(update: Update, context: ContextTypes.DEFAULT_TYP
 {whales_list_str}"""
         await update.message.reply_text(message, parse_mode='Markdown')
     except Exception as e:
-        await update.message.reply_text(f"❌ **發生未知錯誤** ：\n`{str(e)}`")
+        await update.message.reply_text(f"❌ **發生未知錯誤**：\n`{str(e)}`")
+
+async def bot_track_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("使用方式：`/track <錢包地址>`", parse_mode='Markdown')
+        return
+    
+    address = context.args[0]
+    if len(address) != 42 or not address.startswith("0x"):
+        await update.message.reply_text("❌ 地址格式錯誤，請提供一個有效的 42 字元地址。")
+        return
+        
+    add_tracked_address(address)
+    await update.message.reply_text(f"✅ 地址已成功加入追蹤名單：\n`{address}`", parse_mode='Markdown')
+
+async def bot_trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("使用方式：`/trades <錢包地址>`", parse_mode='Markdown')
+        return
+    
+    address = context.args[0]
+    await update.message.reply_text(f"正在查詢 `{address}` 的交易紀錄...", parse_mode='Markdown')
+    
+    trades = get_trades_from_db(address)
+    
+    if not trades:
+        await update.message.reply_text("未找到該地址的交易紀錄。")
+        return
+        
+    message = f"**共有 {len(trades)} 筆交易紀錄**\n*僅顯示最近 5 筆：*\n\n"
+    for trade in trades[:5]:
+        side = "🟢 買入" if trade.get('side') == 'B' else "🔴 賣出"
+        coin = trade.get('coin')
+        size = float(trade.get('sz', 0))
+        price = float(trade.get('px', 0))
+        time_str = format_timestamp(trade.get('time'))
+        message += f"`{time_str}`\n{side} **{coin}**\n數量：`{size}` @ 價格：`${price:,.2f}`\n--------------------
+"
+        
+    await update.message.reply_text(message, parse_mode='Markdown')
+
+async def bot_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("使用方式：`/history <錢包地址>`", parse_mode='Markdown')
+        return
+
+    address = context.args[0]
+    await update.message.reply_text(f"正在查詢 `{address}` 的完整歷史紀錄...", parse_mode='Markdown')
+
+    trades = get_trades_from_db(address)
+    transfers = get_transfers_from_db(address)
+
+    message = f"**`{address}` 的歷史總覽**\n\n"
+    message += f"**資金轉移 (共 {len(transfers)} 筆)**\n*僅顯示最近 3 筆：*\n"
+    if not transfers:
+        message += "無資金轉移紀錄。\n"
+    else:
+        for trans in transfers[:3]:
+            ttype = "📥 存入" if trans.get('action_type') == 'deposit' else "📤 提出"
+            amount = float(trans.get('amount_usdc', 0))
+            time_str = format_timestamp(trans.get('time'))
+            message += f"`{time_str}`\n{ttype} **${amount:,.2f}** USDC\n"
+    
+    message += "\n"
+    message += f"**交易紀錄 (共 {len(trades)} 筆)**\n*僅顯示最近 3 筆：*\n"
+    if not trades:
+        message += "無交易紀錄。\n"
+    else:
+        for trade in trades[:3]:
+            side = "🟢 買入" if trade.get('side') == 'B' else "🔴 賣出"
+            coin = trade.get('coin')
+            time_str = format_timestamp(trade.get('time'))
+            message += f"`{time_str}`: {side} **{coin}**\n"
+            
+    await update.message.reply_text(message, parse_mode='Markdown')
 
 # --- FastAPI 生命週期 ---
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+def lifespan(app: FastAPI):
     # 啟動資料庫和追蹤器
     init_db()
     loop = asyncio.get_event_loop()
@@ -223,12 +307,28 @@ async def lifespan(app: FastAPI):
     # 啟動 Telegram Bot
     token = "8599137925:AAGa5E2DsEEr1ZMwHECGjZZ6-Kr2TEgype8"
     if not token:
-        print("警告：TELEGRAM_TOKEN 環境變數未設定，Telegram Bot 將不會啟動。" )
+        print("警告：TELEGRAM_TOKEN 環境變數未設定，Telegram Bot 將不會啟動。")
     else:
         application = Application.builder().token(token).build()
+        
+        # 註冊所有指令
         application.add_handler(CommandHandler("start", bot_start_command))
         application.add_handler(CommandHandler("analysis", bot_analysis_command))
+        application.add_handler(CommandHandler("track", bot_track_command))
+        application.add_handler(CommandHandler("trades", bot_trades_command))
+        application.add_handler(CommandHandler("history", bot_history_command))
+        
+        # 設定指令選單
+        commands = [
+            BotCommand("start", "查看歡迎訊息與指令說明"),
+            BotCommand("analysis", "獲取最新的市場巨鯨活動分析報告"),
+            BotCommand("track", "新增或追蹤一個錢包地址"),
+            BotCommand("trades", "查詢特定地址的最近交易"),
+            BotCommand("history", "查詢特定地址的歷史總覽")
+        ]
+        
         await application.initialize()
+        await application.bot.set_my_commands(commands)
         await application.start()
         await application.updater.start_polling()
         print("--- Telegram Bot 已整合啟動 ---")
