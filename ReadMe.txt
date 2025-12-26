@@ -1,4 +1,4 @@
-/*├── main.py              # FastAPI 主程式，資料抓取與 API
+── main.py              # FastAPI 主程式，資料抓取與 API
 ├── filter_address.py    # 交易分析與勝率計算
 ├── trades.db            # SQLite 資料庫（自動建立）
 └── README.md
@@ -54,5 +54,3 @@ Formate of return back
     "ETH": 50.0
   }
 }
-
-*/
