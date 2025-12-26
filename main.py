@@ -3,6 +3,8 @@ import asyncio
 import sqlite3
 import aiohttp
 import json
+import time
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -250,6 +252,147 @@ async def get_full_history(address: str):
         "transfers": transfers, # 存入與提出
         "trades": trades        # 交換與買賣
     }
+
+
+# --- 新增：巨鯨活動分析 ---
+
+class WhaleAnalysisResponse(BaseModel):
+    suggestion: str
+    reasoning: str
+    analysis_time_utc: str
+    whale_definition_days: int
+    analysis_period_hours: int
+    whale_transfer_threshold_usdc: float
+    identified_whales_count: int
+    net_volume_usdc: float
+    buy_volume_usdc: float
+    sell_volume_usdc: float
+    identified_whales: list[str]
+
+def analyze_whale_activity():
+    """
+    分析巨鯨活動的核心邏輯
+    1. 定義什麼是巨鯨 (例如：過去30天內有單筆超過10萬U的資金活動)
+    2. 找出這些巨鯨地址
+    3. 分析這些巨鯨在過去24小時內的交易行為
+    4. 計算淨買入/賣出量
+    5. 產生建議
+    """
+    WHALE_DEFINITION_DAYS = 30
+    ANALYSIS_PERIOD_HOURS = 24
+    WHALE_TRANSFER_THRESHOLD_USDC = 100000.0
+    NET_VOLUME_BUY_THRESHOLD_USDC = 500000.0
+    NET_VOLUME_SELL_THRESHOLD_USDC = -500000.0
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    # Hyperliquid 的 'time' 是毫秒級的 Unix 時間戳
+    current_time_ms = time.time() * 1000
+    
+    # 步驟 1: 找出巨鯨地址 (基於資金流水)
+    whale_start_time_ms = current_time_ms - (WHALE_DEFINITION_DAYS * 86400 * 1000)
+
+    cursor.execute("""
+        SELECT DISTINCT user_address
+        FROM transfers
+        WHERE
+            token = 'USDC' AND
+            CAST(amount AS REAL) >= ? AND
+            time >= ?
+    """, (WHALE_TRANSFER_THRESHOLD_USDC, whale_start_time_ms))
+    
+    whales = cursor.fetchall()
+    whale_addresses = [row[0] for row in whales]
+
+    if not whale_addresses:
+        conn.close()
+        return {
+            "suggestion": "HOLD",
+            "reasoning": "在定義的時間範圍內未找到符合條件的巨鯨。",
+            "analysis_time_utc": datetime.utcnow().isoformat(),
+            "whale_definition_days": WHALE_DEFINITION_DAYS,
+            "analysis_period_hours": ANALYSIS_PERIOD_HOURS,
+            "whale_transfer_threshold_usdc": WHALE_TRANSFER_THRESHOLD_USDC,
+            "identified_whales_count": 0,
+            "net_volume_usdc": 0.0,
+            "buy_volume_usdc": 0.0,
+            "sell_volume_usdc": 0.0,
+            "identified_whales": []
+        }
+
+    # 步驟 2: 分析巨鯨在近期的交易
+    analysis_start_time_ms = current_time_ms - (ANALYSIS_PERIOD_HOURS * 3600 * 1000)
+
+    placeholders = ','.join('?' for _ in whale_addresses)
+    query = f"""
+        SELECT side, CAST(px AS REAL) as price, CAST(sz AS REAL) as size
+        FROM trades
+        WHERE user_address IN ({placeholders}) AND time >= ?
+    """
+    
+    params = whale_addresses + [analysis_start_time_ms]
+    cursor.execute(query, params)
+    
+    recent_trades = cursor.fetchall()
+    conn.close()
+
+    buy_volume = 0.0
+    sell_volume = 0.0
+
+    for side, price, size in recent_trades:
+        volume = price * size
+        if side == 'B':
+            buy_volume += volume
+        elif side == 'A':
+            sell_volume += volume
+    
+    net_volume = buy_volume - sell_volume
+
+    # 步驟 3: 產生建議
+    if net_volume > NET_VOLUME_BUY_THRESHOLD_USDC:
+        suggestion = "BUY"
+        reasoning = f"過去 {ANALYSIS_PERIOD_HOURS} 小時內，巨鯨表現出強烈的淨買入行為。"
+    elif net_volume < NET_VOLUME_SELL_THRESHOLD_USDC:
+        suggestion = "SELL"
+        reasoning = f"過去 {ANALYSIS_PERIOD_HOURS} 小時內，巨鯨表現出強烈的淨賣出行為。"
+    else:
+        suggestion = "HOLD"
+        reasoning = f"過去 {ANALYSIS_PERIOD_HOURS} 小時內，巨鯨的買賣行為相對平衡或不活躍。"
+
+    return {
+        "suggestion": suggestion,
+        "reasoning": reasoning,
+        "analysis_time_utc": datetime.utcnow().isoformat(),
+        "whale_definition_days": WHALE_DEFINITION_DAYS,
+        "analysis_period_hours": ANALYSIS_PERIOD_HOURS,
+        "whale_transfer_threshold_usdc": WHALE_TRANSFER_THRESHOLD_USDC,
+        "identified_whales_count": len(whale_addresses),
+        "net_volume_usdc": round(net_volume, 2),
+        "buy_volume_usdc": round(buy_volume, 2),
+        "sell_volume_usdc": round(sell_volume, 2),
+        "identified_whales": whale_addresses
+    }
+
+
+@app.get("/analysis/whale-activity", response_model=WhaleAnalysisResponse)
+async def get_whale_analysis():
+    """
+    執行巨鯨活動分析並返回建議。
+    - **巨鯨定義**: 在過去30天內，有單筆超過 $100,000 USDC 資金轉移(存/提)紀錄的地址。
+    - **分析時間窗口**: 過去24小時內的交易。
+    - **建議邏輯**:
+      - 淨買入量 > $500,000 -> BUY
+      - 淨賣出量 > $500,000 (此處應為淨賣出量大於一個正值，例如賣出超過50萬) -> SELL (邏輯在函式中為 < -500,000)
+      - 其他 -> HOLD
+    """
+    try:
+        result = analyze_whale_activity()
+        return result
+    except Exception as e:
+        print(f"Error during whale analysis: {e}")
+        raise HTTPException(status_code=500, detail="進行巨鯨分析時發生內部錯誤")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
