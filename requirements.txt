@@ -1,0 +1,5 @@
+fastapi
+uvicorn
+aiohttp
+python-telegram-bot
+requests
