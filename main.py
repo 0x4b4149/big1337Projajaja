@@ -256,8 +256,7 @@ async def bot_trades_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         size = float(trade.get('sz', 0))
         price = float(trade.get('px', 0))
         time_str = format_timestamp(trade.get('time'))
-        message += f"`{time_str}`\n{side} **{coin}**\n數量：`{size}` @ 價格：`${price:,.2f}`\n--------------------
-"
+        message += f"`{time_str}`\n{side} **{coin}**\n數量：`{size}` @ 價格：`${price:,.2f}`\n--------------------\n"
         
     await update.message.reply_text(message, parse_mode='Markdown')
 
@@ -298,7 +297,7 @@ async def bot_history_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # --- FastAPI 生命週期 ---
 @asynccontextmanager
-def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI):
     # 啟動資料庫和追蹤器
     init_db()
     loop = asyncio.get_event_loop()
