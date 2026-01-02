@@ -351,6 +351,11 @@ class WhaleAnalysisResponse(BaseModel):
     net_volume_usdc: float; buy_volume_usdc: float; sell_volume_usdc: float
     identified_whales: list[str]
 
+@app.get("/", tags=["Health Check"])
+def read_root():
+    """根目錄，用於健康檢查。"""
+    return {"status": "ok", "message": "Welcome to the Whale Tracker API!"}
+
 @app.post("/track")
 async def track_address(req: TrackRequest):
     if len(req.address) != 42: raise HTTPException(status_code=400, detail="無效地址")
