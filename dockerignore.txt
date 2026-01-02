@@ -1,0 +1,43 @@
+# =============================================================================
+# .dockerignore - 告訴 Docker「這些檔案不要複製進去」
+# .dockerignore - Tell Docker "don't copy these files"
+# =============================================================================
+# 作用類似 .gitignore，但是針對 docker build 時的 COPY 指令
+# Similar to .gitignore, but for the COPY command during docker build
+#
+# 好處 Benefits：
+#   1. 減少 Image 大小 / Reduce image size
+#   2. 避免把機密資訊（如 .env）打包進去 / Prevent secrets (like .env) from being included
+#   3. 加快 build 速度 / Speed up build time
+# =============================================================================
+
+# Python 虛擬環境 - 容器會自己安裝，不需要複製
+# Python virtual environment - container will install its own, no need to copy
+.venv/
+__pycache__/
+*.pyc
+
+# 環境變數（機密資訊！）
+# Environment variables (secrets!)
+.env
+
+# Git 資料夾 / Git folder
+.git/
+.gitignore
+
+# IDE 設定 / IDE settings
+.vscode/
+.idea/
+
+# macOS 系統檔案 / macOS system files
+.DS_Store
+
+# Postman 測試檔案（不需要在 production 環境）
+# Postman test files (not needed in production)
+postman/
+
+# 文件（不影響程式執行）
+# Documentation (doesn't affect program execution)
+docs/
+README.md
+*.md
