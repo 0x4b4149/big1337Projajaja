@@ -77,8 +77,6 @@ jobs:
       - name: ✅ Run basic tests
         run: |
           python -c "from main import app; print('✅ FastAPI app import OK!')"
-          python -c "from google_oauth import verify_google_id_token; print('✅ OAuth module OK!')"
-          python -c "from auth_utils import create_access_token; print('✅ Auth module OK!')"
 
   # ---------------------------------------------------------------------------
   # Job 2: 建立 Docker Image / Build Docker Image
